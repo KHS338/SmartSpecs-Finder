@@ -55,6 +55,22 @@ pids
 # Generated scrape exports
 /exports
 ~$*.xlsx
+*.xlsx
+*.csv
+*.jsonl
+
+# Common local temp/editor artifacts
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+*.swp
+*.swo
+*.stackdump
+.cache/
+.history/
+.npm/
 
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
