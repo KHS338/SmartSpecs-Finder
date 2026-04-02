@@ -1,12 +1,22 @@
 # SmartSpecs Finder
 
+<p align="center">
+	<img src="https://img.shields.io/badge/AI%20Phone%20Recommender-Full%20Stack-0ea5e9?style=for-the-badge" alt="Project Badge" />
+	<img src="https://img.shields.io/badge/RAG%20%2B%20Text--to--SQL-Enabled-22c55e?style=for-the-badge" alt="RAG SQL Badge" />
+	<img src="https://img.shields.io/badge/Status-Active-f59e0b?style=for-the-badge" alt="Status Badge" />
+</p>
+
+<p align="center">
+	<img src="https://skillicons.dev/icons?i=nestjs,nextjs,react,ts,tailwind,nodejs,sqlite" alt="Tech Icons" />
+</p>
+
 SmartSpecs Finder is an end-to-end smartphone intelligence system that goes from live web scraping to analytics-ready data, then serves both recommendation chat (RAG) and structured analytics answers (Text-to-SQL) in one interface.
 
 ## Demo Video
 
-<video src="./bandicam%202026-04-02%2018-35-38-506.mp4" controls="controls" width="100%"></video>
+<video src="./demo.mp4" controls="controls" width="100%"></video>
 
-If GitHub does not render video preview in your browser, open the file from the link above.
+GitHub README pages do not reliably render local HTML `<video>` embeds, but the links above always work.
 
 ## What We Built
 
@@ -66,6 +76,19 @@ This project was built as a complete data and AI pipeline:
 - Clicking a card loads full analytics details from SQLite (not just summary text).
 
 ## Technologies Used
+
+<p>
+	<img src="https://img.shields.io/badge/NestJS-E0234E?style=for-the-badge&logo=nestjs&logoColor=white" alt="NestJS" />
+	<img src="https://img.shields.io/badge/Next.js-000000?style=for-the-badge&logo=nextdotjs&logoColor=white" alt="Next.js" />
+	<img src="https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
+	<img src="https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React" />
+	<img src="https://img.shields.io/badge/Tailwind_CSS-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white" alt="Tailwind" />
+	<img src="https://img.shields.io/badge/LangChain-121212?style=for-the-badge&logoColor=white" alt="LangChain" />
+	<img src="https://img.shields.io/badge/Groq-111111?style=for-the-badge&logoColor=white" alt="Groq" />
+	<img src="https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white" alt="SQLite" />
+	<img src="https://img.shields.io/badge/Chroma-7C3AED?style=for-the-badge&logoColor=white" alt="Chroma" />
+	<img src="https://img.shields.io/badge/Selenium-43B02A?style=for-the-badge&logo=selenium&logoColor=white" alt="Selenium" />
+</p>
 
 ### Backend
 
