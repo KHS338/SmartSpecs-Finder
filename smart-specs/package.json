@@ -35,7 +35,9 @@
     "langchain": "^1.2.39",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "selenium-webdriver": "^4.41.0"
+    "selenium-webdriver": "^4.41.0",
+    "sqlite3": "^5.1.7",
+    "typeorm": "^0.3.28"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",

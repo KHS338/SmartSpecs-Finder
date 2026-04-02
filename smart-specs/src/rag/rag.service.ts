@@ -8,6 +8,10 @@ import * as ExcelJS from 'exceljs';
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PhoneData } from '../scraper/scraper.service';
+import {
+  FeaturePreprocessor,
+  NormalizedPhoneFeatures,
+} from './feature-preprocessor';
 
 class LocalHashEmbeddings extends Embeddings {
   constructor(private readonly dimensions = 384) {
@@ -67,6 +71,7 @@ interface QueryConstraints {
 export class RagService {
   private readonly logger = new Logger(RagService.name);
   private indexedPhones: PhoneData[] = [];
+  private normalizedPhones: NormalizedPhoneFeatures[] = [];
   private initializingIndexPromise: Promise<void> | null = null;
   private readonly chromaHost = process.env.CHROMA_HOST ?? 'localhost';
   private readonly chromaPort = Number.parseInt(
@@ -99,13 +104,37 @@ export class RagService {
   }
 
   async ingestLatestExcelExport() {
-    const phones = await this.readPhonesFromLatestExcel();
+    const phones = await this.loadLatestPhonesFromExcel();
     return await this.ingestPhones(phones);
+  }
+
+  async loadLatestPhonesFromExcel(): Promise<PhoneData[]> {
+    return await this.readPhonesFromLatestExcel();
+  }
+
+  async preprocessLatestExcelForAnalytics() {
+    const phones = await this.readPhonesFromLatestExcel();
+    return await this.preprocessPhonesForAnalytics(phones);
+  }
+
+  async preprocessPhonesForAnalytics(phones: PhoneData[]) {
+    const exportsDir = join(process.cwd(), 'exports');
+    const analyticsFilePath = await FeaturePreprocessor.writeAnalyticsWorkbook(
+      phones,
+      exportsDir,
+    );
+
+    return {
+      message: 'Analytics preprocessing completed.',
+      count: phones.length,
+      analyticsFilePath,
+    };
   }
 
   async ingestPhones(phones: PhoneData[]) {
     this.logger.log(`Embedding ${phones.length} phones into ChromaDB...`);
     this.indexedPhones = phones;
+    this.normalizedPhones = FeaturePreprocessor.normalizePhones(phones);
 
     // Convert raw JSON into LangChain Documents
     const docs = phones.map((phone) => {
@@ -161,6 +190,11 @@ export class RagService {
     await this.ensureIndexReady();
 
     this.logger.log(`User asks: "${query}"`);
+
+    const analyticsAnswer = this.tryAnswerWithAnalytics(query);
+    if (analyticsAnswer) {
+      return analyticsAnswer;
+    }
 
     const constraints = this.extractConstraints(query);
     let results = await this.findConstraintAwareResults(query, constraints, 8);
@@ -257,6 +291,276 @@ export class RagService {
     } finally {
       this.initializingIndexPromise = null;
     }
+  }
+
+  private tryAnswerWithAnalytics(query: string): {
+    recommendation: string;
+    sources: Array<Record<string, unknown>>;
+  } | null {
+    if (this.normalizedPhones.length === 0) {
+      return null;
+    }
+
+    const lowered = query.toLowerCase();
+
+    if (
+      /how many .*\b(samsung|apple|iphone|oppo|vivo|xiaomi|infinix|tecno|realme|google|oneplus)\b/.test(
+        lowered,
+      )
+    ) {
+      return this.answerBrandCountQuery(query);
+    }
+
+    if (/(has|have|is).*(highest|max).*(battery|mah)/.test(lowered)) {
+      return this.answerHasHighestBatteryQuery(query);
+    }
+
+    if (
+      /(list|show|top).*(battery|mah)|top\s*\d+.*(battery|mah)/.test(lowered)
+    ) {
+      return this.answerTopBatteryQuery(query);
+    }
+
+    if (
+      /(color|colour).*\b(iphone|apple|samsung|oppo|vivo|xiaomi|infinix|tecno|realme|google|oneplus)\b/.test(
+        lowered,
+      )
+    ) {
+      return this.answerColorsQuery(query);
+    }
+
+    if (/how many .*screen.*(same|size|type|oled|amoled|lcd)/.test(lowered)) {
+      return this.answerScreenGroupingQuery();
+    }
+
+    return null;
+  }
+
+  private answerBrandCountQuery(query: string): {
+    recommendation: string;
+    sources: Array<Record<string, unknown>>;
+  } | null {
+    const brand = this.extractBrand(query);
+    if (!brand) {
+      return null;
+    }
+
+    const matches = this.indexedPhones.filter((phone) =>
+      this.matchesBrand(phone, brand),
+    );
+
+    return {
+      recommendation: `There are ${matches.length} ${brand.toUpperCase() === 'IPHONE' ? 'Apple iPhone' : brand} phones available in the indexed database.`,
+      sources: matches.slice(0, 20).map((phone) => ({
+        id: phone.id,
+        name: phone.name,
+        price: phone.price,
+        url: phone.url,
+      })),
+    };
+  }
+
+  private answerTopBatteryQuery(query: string): {
+    recommendation: string;
+    sources: Array<Record<string, unknown>>;
+  } {
+    const topN = this.extractTopN(query, 10);
+    const ranked = [...this.normalizedPhones]
+      .filter((phone) => phone.batteryMah !== null)
+      .sort((a, b) => (b.batteryMah ?? 0) - (a.batteryMah ?? 0))
+      .slice(0, topN);
+
+    const lines = ranked.map(
+      (phone, idx) =>
+        `${idx + 1}. ${phone.name} - ${phone.batteryMah ?? 'N/A'} mAh`,
+    );
+
+    return {
+      recommendation:
+        lines.length > 0
+          ? `Top ${ranked.length} phones by battery capacity:\n${lines.join('\n')}`
+          : 'No battery-capacity data is available in the indexed database.',
+      sources: ranked.map((phone) => ({
+        id: phone.id,
+        name: phone.name,
+        batteryMah: phone.batteryMah,
+        price: phone.pricePkr,
+        url: phone.url,
+      })),
+    };
+  }
+
+  private answerHasHighestBatteryQuery(query: string): {
+    recommendation: string;
+    sources: Array<Record<string, unknown>>;
+  } | null {
+    const bestMatch = this.findBestPhoneMatchFromQuery(query);
+    if (!bestMatch) {
+      return null;
+    }
+
+    const maxBattery = Math.max(
+      ...this.normalizedPhones
+        .map((p) => p.batteryMah ?? 0)
+        .filter((v) => Number.isFinite(v)),
+    );
+
+    const topPhones = this.normalizedPhones.filter(
+      (p) => (p.batteryMah ?? 0) === maxBattery,
+    );
+    const isHighest = (bestMatch.batteryMah ?? 0) === maxBattery;
+
+    const recommendation = isHighest
+      ? `Yes. ${bestMatch.name} is among the highest-battery phones at ${bestMatch.batteryMah} mAh.`
+      : `No. ${bestMatch.name} has ${bestMatch.batteryMah ?? 'N/A'} mAh. The highest in the indexed database is ${maxBattery} mAh (${topPhones.map((p) => p.name).join(', ')}).`;
+
+    return {
+      recommendation,
+      sources: [bestMatch, ...topPhones].slice(0, 8).map((phone) => ({
+        id: phone.id,
+        name: phone.name,
+        batteryMah: phone.batteryMah,
+        price: phone.pricePkr,
+        url: phone.url,
+      })),
+    };
+  }
+
+  private answerColorsQuery(query: string): {
+    recommendation: string;
+    sources: Array<Record<string, unknown>>;
+  } | null {
+    const bestMatch = this.findBestPhoneMatchFromQuery(query);
+    if (!bestMatch) {
+      return null;
+    }
+
+    const colors = bestMatch.colors
+      .split(',')
+      .map((c) => c.trim())
+      .filter((c) => c.length > 0);
+
+    if (colors.length === 0) {
+      return {
+        recommendation: `No color options are available in the dataset for ${bestMatch.name}.`,
+        sources: [
+          {
+            id: bestMatch.id,
+            name: bestMatch.name,
+            price: bestMatch.pricePkr,
+            url: bestMatch.url,
+          },
+        ],
+      };
+    }
+
+    return {
+      recommendation: `Color options for ${bestMatch.name}: ${colors.join(', ')}.`,
+      sources: [
+        {
+          id: bestMatch.id,
+          name: bestMatch.name,
+          colors,
+          price: bestMatch.pricePkr,
+          url: bestMatch.url,
+        },
+      ],
+    };
+  }
+
+  private answerScreenGroupingQuery(): {
+    recommendation: string;
+    sources: Array<Record<string, unknown>>;
+  } {
+    const grouped = new Map<string, number>();
+    for (const phone of this.normalizedPhones) {
+      const key = `${phone.screenSizeInches ?? 'N/A'} in | ${phone.displayType || 'N/A'}`;
+      grouped.set(key, (grouped.get(key) ?? 0) + 1);
+    }
+
+    const top = Array.from(grouped.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 12);
+
+    const lines = top.map(([k, count]) => `- ${k}: ${count} phones`);
+    return {
+      recommendation:
+        lines.length > 0
+          ? `Most common screen-size/display-type groups:\n${lines.join('\n')}`
+          : 'No screen analytics data is available.',
+      sources: top.map(([group, count]) => ({ group, count })),
+    };
+  }
+
+  private extractTopN(query: string, fallback: number): number {
+    const match = query.toLowerCase().match(/top\s*(\d{1,2})/);
+    if (!match) {
+      return fallback;
+    }
+    const n = Number.parseInt(match[1], 10);
+    if (!Number.isFinite(n) || n <= 0) {
+      return fallback;
+    }
+    return Math.min(n, 50);
+  }
+
+  private findBestPhoneMatchFromQuery(
+    query: string,
+  ): NormalizedPhoneFeatures | null {
+    const tokens = query
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((t) => t.length > 1)
+      .filter(
+        (t) =>
+          ![
+            'what',
+            'which',
+            'how',
+            'many',
+            'does',
+            'have',
+            'highest',
+            'battery',
+            'mah',
+            'color',
+            'colour',
+            'options',
+            'for',
+            'with',
+            'the',
+            'a',
+            'an',
+            'is',
+            'are',
+          ].includes(t),
+      );
+
+    if (tokens.length === 0) {
+      return null;
+    }
+
+    let best: NormalizedPhoneFeatures | null = null;
+    let bestScore = 0;
+
+    for (const phone of this.normalizedPhones) {
+      const hay = `${phone.name} ${phone.company} ${phone.model}`.toLowerCase();
+      let score = 0;
+      for (const token of tokens) {
+        if (hay.includes(token)) {
+          score += 1;
+        }
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        best = phone;
+      }
+    }
+
+    if (bestScore === 0) {
+      return null;
+    }
+    return best;
   }
 
   private findConstraintAwareResults(
