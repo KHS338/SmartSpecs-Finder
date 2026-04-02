@@ -6,15 +6,15 @@
 	<img src="https://img.shields.io/badge/Status-Active-f59e0b?style=for-the-badge" alt="Status Badge" />
 </p>
 
+https://github.com/user-attachments/assets/9e94b3c8-d42c-4af2-9745-034f52c789f5
+
+
+
 <p align="center">
 	<img src="https://skillicons.dev/icons?i=nestjs,nextjs,react,ts,tailwind,nodejs,sqlite" alt="Tech Icons" />
 </p>
 
 SmartSpecs Finder is an end-to-end smartphone intelligence system that goes from live web scraping to analytics-ready data, then serves both recommendation chat (RAG) and structured analytics answers (Text-to-SQL) in one interface.
-
-## Demo Video
-
-<video src="./demo.mp4" controls="controls" width="100%"></video>
 
 GitHub README pages do not reliably render local HTML `<video>` embeds, but the links above always work.
 
