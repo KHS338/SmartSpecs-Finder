@@ -16,7 +16,6 @@ https://github.com/user-attachments/assets/9e94b3c8-d42c-4af2-9745-034f52c789f5
 
 SmartSpecs Finder is an end-to-end smartphone intelligence system that goes from live web scraping to analytics-ready data, then serves both recommendation chat (RAG) and structured analytics answers (Text-to-SQL) in one interface.
 
-GitHub README pages do not reliably render local HTML `<video>` embeds, but the links above always work.
 
 ## What We Built
 
