@@ -1,7 +1,7 @@
 import { BadRequestException, Body, Controller, Post } from '@nestjs/common';
 import { RagService } from './rag.service';
 import { ScraperService } from '../scraper/scraper.service';
-import { SqlAnalyticsService } from './sql-analytics.service';
+import { SqlAnalyticsService, SqlAskResult } from './sql-analytics.service';
 
 @Controller('rag')
 export class RagController {
@@ -86,20 +86,20 @@ export class RagController {
   async ask(@Body() body: Record<string, unknown>) {
     const query = this.extractQuery(body);
 
-    if (this.isSqlAnalyticsQuery(query)) {
-      const sql = await this.sqlAnalyticsService.askWithSql(query);
+    const sqlAttempt = await this.trySql(query);
+    if (sqlAttempt && this.shouldUseSqlAnswer(query, sqlAttempt)) {
       return {
-        recommendation: sql.answer,
+        recommendation: sqlAttempt.answer,
         sources: [],
-        sql: sql.sql,
-        rawResult: sql.rawResult,
+        sql: sqlAttempt.sql,
+        rawResult: sqlAttempt.rawResult,
       };
     }
 
     return await this.ragService.askOracle(query);
   }
 
-  private isSqlAnalyticsQuery(query: string): boolean {
+  private isAnalyticsIntent(query: string): boolean {
     const q = query.toLowerCase();
     return (
       /\b(avg|average|mean|median|min|max|highest|lowest|top|cheapest|expensive|best)\b/.test(
@@ -112,6 +112,45 @@ export class RagController {
         q,
       )
     );
+  }
+
+  private async trySql(query: string): Promise<SqlAskResult | null> {
+    try {
+      return await this.sqlAnalyticsService.askWithSql(query);
+    } catch {
+      return null;
+    }
+  }
+
+  private shouldUseSqlAnswer(query: string, sql: SqlAskResult): boolean {
+    const rows = this.parseSqlRows(sql.rawResult);
+    if (rows.length === 0) {
+      return this.isAnalyticsIntent(query);
+    }
+
+    const hasNamedPhone = rows.some(
+      (row) => typeof row.name === 'string' && row.name.trim().length > 0,
+    );
+    if (hasNamedPhone) {
+      return true;
+    }
+
+    return this.isAnalyticsIntent(query);
+  }
+
+  private parseSqlRows(rawResult: string): Array<Record<string, unknown>> {
+    try {
+      const parsed: unknown = JSON.parse(rawResult);
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+      return parsed.filter(
+        (item): item is Record<string, unknown> =>
+          !!item && typeof item === 'object',
+      );
+    } catch {
+      return [];
+    }
   }
 
   private extractQuery(body: Record<string, unknown> | undefined): string {

@@ -116,14 +116,19 @@ export default function Dashboard() {
       const data = await response.json();
 
       setChat((prev) => [...prev, { role: "ai", text: data.recommendation }]);
+      const recommendationText =
+        typeof data.recommendation === "string" ? data.recommendation : "";
 
       // Update the UI with metadata extracted from ChromaDB
       if (Array.isArray(data.sources) && data.sources.length > 0) {
         // Remove duplicates just in case the vector DB pulled overlapping chunks
-        const uniquePhones = Array.from(
-          new Map(data.sources.map((item: PhoneSource) => [item.url, item])).values()
+        const uniquePhones = dedupePhones(data.sources as PhoneSource[]);
+        setRecommendedPhones(
+          filterPhonesByRecommendation(
+            uniquePhones as PhoneSource[],
+            recommendationText,
+          ),
         );
-        setRecommendedPhones(uniquePhones as PhoneSource[]);
         setSelectedPhoneId(null);
         setSelectedPhoneDetails(null);
         setDetailsError(null);
@@ -142,12 +147,12 @@ export default function Dashboard() {
                   ? Number.parseInt(row.price_pkr, 10)
                   : 0;
 
-            if (!name || !url) {
+            if (!name) {
               return null;
             }
 
             return {
-              id: id || url,
+              id: id || name,
               name,
               url,
               price: Number.isFinite(price) ? price : 0,
@@ -155,11 +160,11 @@ export default function Dashboard() {
           })
           .filter((item): item is PhoneSource => item !== null);
 
-        const uniquePhones = Array.from(
-          new Map(sqlPhones.map((item) => [item.url, item])).values()
-        );
+        const uniquePhones = dedupePhones(sqlPhones);
 
-        setRecommendedPhones(uniquePhones);
+        setRecommendedPhones(
+          filterPhonesByRecommendation(uniquePhones, recommendationText),
+        );
         setSelectedPhoneId(null);
         setSelectedPhoneDetails(null);
         setDetailsError(null);
@@ -211,6 +216,24 @@ export default function Dashboard() {
     }
 
     return [];
+  };
+
+  const filterPhonesByRecommendation = (
+    phones: PhoneSource[],
+    recommendation: string,
+  ): PhoneSource[] => {
+    const normalizedRecommendation = recommendation.toLowerCase();
+    const mentioned = phones.filter((phone) =>
+      normalizedRecommendation.includes(phone.name.toLowerCase()),
+    );
+
+    return mentioned.length > 0 ? mentioned : phones;
+  };
+
+  const dedupePhones = (phones: PhoneSource[]): PhoneSource[] => {
+    return Array.from(
+      new Map(phones.map((item) => [item.url || item.name, item])).values(),
+    );
   };
 
   const openPhoneDetails = async (phone: PhoneSource) => {
@@ -361,21 +384,25 @@ export default function Dashboard() {
                         <div className="p-5 flex-1">
                           <h3 className="text-lg font-bold text-white mb-2 line-clamp-2">{phone.name}</h3>
                           <div className="inline-block bg-neutral-950 border border-neutral-700 rounded text-emerald-400 font-mono text-sm px-2 py-1 mb-3">
-                            Rs {phone.price.toLocaleString()}
+                            {phone.price > 0 ? `Rs ${phone.price.toLocaleString()}` : "Price N/A"}
                           </div>
                           <p className="text-xs text-neutral-500">Click card to view full analytics info</p>
                         </div>
                         <div className="bg-neutral-950 p-4 border-t border-neutral-800 mt-auto">
-                          <a
-                            href={phone.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(event) => event.stopPropagation()}
-                            className="text-sm font-medium text-neutral-400 hover:text-emerald-400 flex items-center justify-between transition-colors w-full"
-                          >
-                            View on PriceOye
-                            <svg className="w-4 h-4 transform group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
-                          </a>
+                          {phone.url ? (
+                            <a
+                              href={phone.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(event) => event.stopPropagation()}
+                              className="text-sm font-medium text-neutral-400 hover:text-emerald-400 flex items-center justify-between transition-colors w-full"
+                            >
+                              View on PriceOye
+                              <svg className="w-4 h-4 transform group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+                            </a>
+                          ) : (
+                            <p className="text-sm text-neutral-500">Store link unavailable for this result</p>
+                          )}
                         </div>
                       </button>
                     );
