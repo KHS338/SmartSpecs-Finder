@@ -67,6 +67,13 @@ interface QueryConstraints {
 export class RagService {
   private readonly logger = new Logger(RagService.name);
   private indexedPhones: PhoneData[] = [];
+  private initializingIndexPromise: Promise<void> | null = null;
+  private readonly chromaHost = process.env.CHROMA_HOST ?? 'localhost';
+  private readonly chromaPort = Number.parseInt(
+    process.env.CHROMA_PORT ?? '8000',
+    10,
+  );
+  private readonly chromaSsl = (process.env.CHROMA_SSL ?? 'false') === 'true';
   private vectorStore:
     | Chroma
     | {
@@ -121,15 +128,21 @@ export class RagService {
     });
 
     try {
-      // Prefer Chroma if server is available.
+      // Prefer persistent Chroma when available.
       this.vectorStore = await Chroma.fromDocuments(docs, this.embeddings, {
         collectionName: 'smartphones',
-        url: 'http://localhost:8000',
+        clientParams: {
+          host: this.chromaHost,
+          port: this.chromaPort,
+          ssl: this.chromaSsl,
+        },
       });
-      this.logger.log('Connected to ChromaDB at http://localhost:8000');
+      this.logger.log(
+        `Connected to ChromaDB at ${this.chromaSsl ? 'https' : 'http'}://${this.chromaHost}:${this.chromaPort}`,
+      );
     } catch (error) {
       this.logger.warn(
-        'ChromaDB unavailable; falling back to in-memory vector store.',
+        'ChromaDB unavailable; falling back to in-memory vector store (non-persistent).',
       );
       if (error instanceof Error) {
         this.logger.warn(error.message);
@@ -145,11 +158,7 @@ export class RagService {
   }
 
   async askOracle(query: string) {
-    if (!this.vectorStore) {
-      throw new Error(
-        'Database is empty. Please run /rag/update-database first.',
-      );
-    }
+    await this.ensureIndexReady();
 
     this.logger.log(`User asks: "${query}"`);
 
@@ -223,6 +232,31 @@ export class RagService {
       recommendation: safeRecommendation,
       sources: results.map((r) => r.metadata),
     };
+  }
+
+  private async ensureIndexReady(): Promise<void> {
+    if (this.vectorStore && this.indexedPhones.length > 0) {
+      return;
+    }
+
+    if (this.initializingIndexPromise) {
+      await this.initializingIndexPromise;
+      return;
+    }
+
+    this.initializingIndexPromise = (async () => {
+      this.logger.log(
+        'Vector index is empty. Auto-loading latest Excel export before answering.',
+      );
+      const phones = await this.readPhonesFromLatestExcel();
+      await this.ingestPhones(phones);
+    })();
+
+    try {
+      await this.initializingIndexPromise;
+    } finally {
+      this.initializingIndexPromise = null;
+    }
   }
 
   private findConstraintAwareResults(
@@ -352,14 +386,47 @@ export class RagService {
   }
 
   private extractBudget(query: string): number | null {
-    const numericMatches = query.match(/\d[\d,]*/g);
-    if (!numericMatches || numericMatches.length === 0) {
+    const lowered = query.toLowerCase();
+    const hasBudgetCue =
+      /\bbudget\b/.test(lowered) ||
+      /\bunder\b/.test(lowered) ||
+      /\bwithin\b/.test(lowered) ||
+      /\bup\s*to\b/.test(lowered) ||
+      /\bmax(?:imum)?\b/.test(lowered) ||
+      /\bpkr\b/.test(lowered) ||
+      /\brs\.?\b/.test(lowered) ||
+      /\brupees?\b/.test(lowered);
+
+    if (!hasBudgetCue) {
       return null;
     }
 
-    const parsed = numericMatches
-      .map((v) => Number.parseInt(v.replace(/,/g, ''), 10))
-      .filter((v) => Number.isFinite(v) && v > 0);
+    const parsed: number[] = [];
+    const matches = lowered.matchAll(/(\d[\d,]*(?:\.\d+)?)\s*(k|m|lac|lakh)?/g);
+
+    for (const match of matches) {
+      const numericPart = Number.parseFloat(match[1].replace(/,/g, ''));
+      if (!Number.isFinite(numericPart) || numericPart <= 0) {
+        continue;
+      }
+
+      const suffix = match[2];
+      let value = numericPart;
+      if (suffix === 'k') {
+        value = numericPart * 1_000;
+      } else if (suffix === 'm') {
+        value = numericPart * 1_000_000;
+      } else if (suffix === 'lac' || suffix === 'lakh') {
+        value = numericPart * 100_000;
+      }
+
+      // Ignore tiny values that are almost certainly model numbers (e.g. "iPhone 17").
+      if (value < 10_000) {
+        continue;
+      }
+
+      parsed.push(Math.floor(value));
+    }
 
     if (parsed.length === 0) {
       return null;
